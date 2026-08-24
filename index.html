@@ -2013,6 +2013,10 @@ const[novo,setNovo]=useState({itemId:"",nomeLivre:"",unidadeLivre:"",quantidade:
 const[modoLivre,setModoLivre]=useState(false);
 const[comprando,setComprando]=useState(null);
 const[formCompra,setFormCompra]=useState({fornecedorNome:"",valorUnitario:"",previsaoChegada:"",anexoId:null,anexoExt:null});
+const[selecionados,setSelecionados]=useState([]);
+const[comprandoLote,setComprandoLote]=useState(false);
+const[formCompraLote,setFormCompraLote]=useState({fornecedorNome:"",previsaoChegada:"",anexoId:null,anexoExt:null,valores:{}});
+const toggleSelecionado=id=>setSelecionados(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
 const itensAtivos=(almoxarifadoItens||[]).filter(i=>i.ativo!==false);
 const adicionarItem=()=>{
 let base;
@@ -2062,6 +2066,40 @@ const custo={id:uid(),descricao:"🛒 "+(it.nome||"Item")+" — "+qtd+(it.unidad
 addCusto(custo);
 saveItens((itens||[]).map(x=>x.id===it.id?{...x,status:"Recebido",dataRecebimento:todayISO()}:x));
 };
+const abrirCompraLote=()=>{
+const alvos=meusItens.filter(it=>selecionados.includes(it.id)&&!compraItemResolvido(it));
+if(!alvos.length){window.alert("Selecione ao menos um item pendente de compra.");return;}
+const valores={};alvos.forEach(it=>{valores[it.id]=it.valorUnitario||"";});
+setFormCompraLote({fornecedorNome:"",previsaoChegada:"",anexoId:null,anexoExt:null,valores});
+setComprandoLote(true);
+};
+const confirmarCompraLote=()=>{
+const alvos=meusItens.filter(it=>selecionados.includes(it.id)&&!compraItemResolvido(it));
+if(!alvos.length){setComprandoLote(false);return;}
+const nomeDigitado=(formCompraLote.fornecedorNome||"").trim();
+const fornecedorMatch=(fornecedores||[]).find(f=>String(f.nome||"").trim().toLowerCase()===nomeDigitado.toLowerCase());
+const idsAlvo=alvos.map(it=>it.id);
+saveItens((itens||[]).map(x=>{
+if(!idsAlvo.includes(x.id))return x;
+const qtd=compraItemFalta(x);
+return{...x,status:"Aguardando compra",fornecedorId:fornecedorMatch?fornecedorMatch.id:null,fornecedorNome:formCompraLote.fornecedorNome||"",valorUnitario:formCompraLote.valores[x.id]!==undefined?formCompraLote.valores[x.id]:x.valorUnitario,previsaoChegada:formCompraLote.previsaoChegada,dataCompra:todayISO(),quantidadeComprada:qtd,anexoId:formCompraLote.anexoId||null,anexoExt:formCompraLote.anexoExt||null};
+}));
+setComprandoLote(false);
+setSelecionados([]);
+};
+const registrarRecebimentoLote=()=>{
+const alvos=meusItens.filter(it=>selecionados.includes(it.id)&&it.status==="Aguardando compra"&&!compraItemResolvido(it));
+if(!alvos.length){window.alert("Selecione itens que já estejam com compra registrada (\"Aguardando compra\") pra dar entrada.");return;}
+if(!window.confirm("Confirmar o recebimento de "+alvos.length+" item(ns)?"))return;
+const novosCustos=alvos.map(it=>{
+const qtd=Number(it.quantidadeComprada)||compraItemFalta(it);
+return{id:uid(),descricao:"🛒 "+(it.nome||"Item")+" — "+qtd+(it.unidade?" "+it.unidade:"")+(it.fornecedorNome?" ("+it.fornecedorNome+")":""),categoria:"Outros",tipo:"Material",fornecedor:it.fornecedorNome||"Fornecedor não informado",valor:qtd*(Number(it.valorUnitario)||0),data:todayISO(),pagoEm:"",origem:"compras",compraItemId:it.id,quantidade:qtd,unidade:it.unidade||"",anexoId:it.anexoId||null,anexoExt:it.anexoExt||null};
+});
+saveObras(obras.map(o=>o.id===obra.id?{...o,custos:[...(o.custos||[]),...novosCustos]}:o));
+const idsAlvo=alvos.map(it=>it.id);
+saveItens((itens||[]).map(x=>idsAlvo.includes(x.id)?{...x,status:"Recebido",dataRecebimento:todayISO()}:x));
+setSelecionados([]);
+};
 const tudoResolvido=meusItens.length>0&&meusItens.every(compraItemResolvido);
 const linhas=meusItens.map(it=>{
 const disponivel=it.itemId?estoqueAtual(it.itemId,almoxarifadoMovimentos):null;
@@ -2071,6 +2109,7 @@ const cor=resolvido?C.verde:(it.status==="Aguardando compra"?"#7A5C00":C.cinza);
 const atrasado=it.status==="Aguardando compra"&&it.previsaoChegada&&isOverdue(it.previsaoChegada);
 return React.createElement("div",{key:it.id,style:{padding:"10px 0",borderBottom:"1px solid "+C.cinzaClaro}},
 React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:8,flexWrap:"wrap"}},
+!resolvido&&React.createElement("input",{type:"checkbox",checked:selecionados.includes(it.id),onChange:()=>toggleSelecionado(it.id),title:"Selecionar pra compra/recebimento em lote",style:{marginTop:4,cursor:"pointer",flexShrink:0}}),
 React.createElement("div",{style:{flex:1,minWidth:160}},
 React.createElement("div",{style:{fontSize:13,fontWeight:600,color:C.preto}},it.nome+(it.itemId?"":" (item novo)")),
 React.createElement("div",{style:{fontSize:11,color:C.cinza,marginTop:2}},"Necessário: "+it.quantidadeNecessaria+(it.unidade?" "+it.unidade:"")+(disponivel!==null?" · Em estoque: "+disponivel+(it.unidade?" "+it.unidade:""):"")+" · Reservado: "+(Number(it.quantidadeReservada)||0)+(it.unidade?" "+it.unidade:""))),
@@ -2105,7 +2144,21 @@ React.createElement(Field,{label:"Item do Almoxarifado"},React.createElement(Sel
 React.createElement(Row,null,
 React.createElement(Field,{label:"Quantidade necessária",half:true},React.createElement(TI,{type:"number",step:"0.01",min:"0",value:novo.quantidade,onChange:e=>setNovo(p=>({...p,quantidade:e.target.value}))}))),
 React.createElement(Btn,{icon:"plus",onClick:adicionarItem},"Adicionar à lista")),
+selecionados.length>0&&React.createElement("div",{style:{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap",background:"#FCE9C8",border:"1px solid "+C.ouro,borderRadius:8,padding:"8px 12px",marginBottom:12}},
+React.createElement("span",{style:{fontSize:12,fontWeight:700,color:"#7A5C00"}},selecionados.length+" item(ns) selecionado(s)"),
+React.createElement(Btn,{onClick:abrirCompraLote},"📎 Confirmar compra em lote (1 nota p/ vários itens)"),
+React.createElement(Btn,{variant:"secondary",onClick:registrarRecebimentoLote},"Registrar recebimento em lote"),
+React.createElement("button",{onClick:()=>setSelecionados([]),style:{background:"none",border:"none",color:C.cinza,cursor:"pointer",fontSize:12,textDecoration:"underline"}},"Limpar seleção")),
 meusItens.length===0?React.createElement(Empty,{icon:"projects",text:"Nenhum item na lista ainda. Adicione os materiais necessários pra esta obra acima."}):React.createElement("div",null,linhas),
+comprandoLote&&React.createElement(Modal,{title:"Confirmar compra em lote",onClose:()=>setComprandoLote(false)},
+React.createElement("div",{style:{fontSize:12,color:C.cinza,marginBottom:10}},"Uma única nota fiscal vai ser vinculada a todos os itens selecionados. Informe o valor unitário de cada item conforme a nota."),
+React.createElement(Row,null,
+React.createElement(Field,{label:"Fornecedor",half:true},React.createElement(TI,{value:formCompraLote.fornecedorNome,onChange:e=>setFormCompraLote(p=>({...p,fornecedorNome:e.target.value})),list:"lista-fornecedores-compras"})),
+React.createElement(Field,{label:"Previsão de chegada",half:true},React.createElement(TI,{type:"date",value:formCompraLote.previsaoChegada,onChange:e=>setFormCompraLote(p=>({...p,previsaoChegada:e.target.value}))}))),
+React.createElement(Field,{label:"Nota fiscal (vale pra todos os itens selecionados)"},React.createElement(AnexoComprovante,{anexoId:formCompraLote.anexoId,anexoExt:formCompraLote.anexoExt,onChange:({anexoId,anexoExt})=>setFormCompraLote(p=>({...p,anexoId,anexoExt}))})),
+React.createElement("div",{style:{fontSize:11,fontWeight:700,color:C.preto,marginTop:10,marginBottom:6,textTransform:"uppercase",letterSpacing:.4}},"Valor unitário de cada item"),
+meusItens.filter(it=>selecionados.includes(it.id)&&!compraItemResolvido(it)).map(it=>React.createElement("div",{key:it.id,style:{display:"flex",justifyContent:"space-between",alignItems:"center",gap:10,marginBottom:8}},React.createElement("span",{style:{fontSize:12,flex:1}},it.nome+" ("+compraItemFalta(it)+(it.unidade?" "+it.unidade:"")+")"),React.createElement("div",{style:{width:140}},React.createElement(MoneyInput,{value:formCompraLote.valores[it.id]||"",onChange:v=>setFormCompraLote(p=>({...p,valores:{...p.valores,[it.id]:v}}))})))),
+React.createElement("div",{style:{display:"flex",gap:8,justifyContent:"flex-end",marginTop:14,paddingTop:12,borderTop:"1px solid "+C.cinzaClaro}},React.createElement(Btn,{variant:"secondary",onClick:()=>setComprandoLote(false)},"Cancelar"),React.createElement(Btn,{onClick:confirmarCompraLote},"Confirmar compra em lote"))),
 React.createElement("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:20,paddingTop:14,borderTop:"1px solid "+C.cinzaClaro,flexWrap:"wrap",gap:10}},
 obra.comprasLiberadaEm?React.createElement("div",{style:{fontSize:12,color:C.verde,fontWeight:700}},"✓ Liberado pra produção em "+fmtDate(obra.comprasLiberadaEm.slice(0,10))+(obra.comprasLiberadaPor?" por "+obra.comprasLiberadaPor:"")):React.createElement("div",{style:{display:"flex",flexDirection:"column",gap:4,alignItems:"flex-start"}},React.createElement(Btn,{disabled:!tudoResolvido,onClick:()=>{saveObras(obras.map(o=>o.id===obra.id?{...o,comprasLiberadaEm:new Date().toISOString(),comprasLiberadaPor:perfilLabelAtual()}:o));}},"Liberar para Produção"),!tudoResolvido&&React.createElement("span",{style:{fontSize:10,color:C.cinza}},"Resolva todos os itens da lista antes de liberar")),
 React.createElement(Btn,{variant:"secondary",onClick:onClose},"Fechar")));
